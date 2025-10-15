@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>US Phone Validator (with NANPA)</title>
+<style>
+  body { font-family: Arial; padding: 20px; background: #fafafa; }
+  input { margin-bottom: 10px; }
+  table { border-collapse: collapse; width: 100%; margin-top: 15px; }
+  th, td { border: 1px solid #ccc; padding: 6px 8px; }
+  th { background: #eee; }
+  .valid { color: green; }
+  .invalid { color: red; }
+</style>
+</head>
+<body>
+<h2>📞 U.S. Phone Validator (Browser)</h2>
+
+<p>1️⃣ Upload your NANPA CSV → 2️⃣ Upload your Numbers File</p>
+
+<input type="file" id="nanpaFile" accept=".csv,.txt" />
+<br />
+<input type="file" id="numbersFile" accept=".csv,.txt" />
+
+<table id="resultTable">
+  <thead>
+    <tr>
+      <th>#</th><th>Number</th><th>Valid</th><th>State</th><th>Prefix</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
+<script src="https://cdn.jsdelivr.net/npm/libphonenumber-js@1.10.28/bundle/libphonenumber-js.min.js"></script>
+<script>
+let nanpaData = {};
+let numbers = [];
+
+// Map of US state abbreviations to full names
+const stateNames = {
+  "AL":"Alabama","AK":"Alaska","AZ":"Arizona","AR":"Arkansas","CA":"California","CO":"Colorado",
+  "CT":"Connecticut","DE":"Delaware","DC":"District of Columbia","FL":"Florida","GA":"Georgia",
+  "HI":"Hawaii","ID":"Idaho","IL":"Illinois","IN":"Indiana","IA":"Iowa","KS":"Kansas","KY":"Kentucky",
+  "LA":"Louisiana","ME":"Maine","MD":"Maryland","MA":"Massachusetts","MI":"Michigan","MN":"Minnesota",
+  "MS":"Mississippi","MO":"Missouri","MT":"Montana","NE":"Nebraska","NV":"Nevada","NH":"New Hampshire",
+  "NJ":"New Jersey","NM":"New Mexico","NY":"New York","NC":"North Carolina","ND":"North Dakota",
+  "OH":"Ohio","OK":"Oklahoma","OR":"Oregon","PA":"Pennsylvania","RI":"Rhode Island","SC":"South Carolina",
+  "SD":"South Dakota","TN":"Tennessee","TX":"Texas","UT":"Utah","VT":"Vermont","VA":"Virginia",
+  "WA":"Washington","WV":"West Virginia","WI":"Wisconsin","WY":"Wyoming","PR":"Puerto Rico"
+};
+
+// ========== NANPA FILE PARSER ==========
+document.getElementById("nanpaFile").addEventListener("change", e => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = evt => {
+    const text = evt.target.result;
+    // Normalize encoding, strip BOM, trim whitespace
+    const cleanText = text.replace(/\uFEFF/g, '').trim();
+
+    const lines = cleanText.split(/\r?\n/).filter(Boolean);
+    console.log("First 3 lines from file:", lines.slice(0,3));
+
+    if (lines.length < 2) {
+      alert("❌ NANPA file appears empty or invalid");
+      return;
+    }
+
+    // detect header columns robustly (case-insensitive)
+    const headers = lines[0].split(/[,;\t]+/).map(h => h.trim().toLowerCase());
+    const stateIdx = headers.findIndex(h => h.includes("state"));
+    const npaIdx = headers.findIndex(h => h === "npa" || h.includes("area"));
+    const nxxIdx = headers.findIndex(h => h === "nxx" || h.includes("prefix"));
+    const companyIdx = headers.findIndex(h => h.includes("company") || h.includes("carrier"));
+
+    if (stateIdx < 0 || npaIdx < 0 || nxxIdx < 0) {
+      alert("❌ NANPA CSV missing columns for State, NPA, or NXX. Check header names.");
+      console.error("Detected header:", headers);
+      return;
+    }
+
+    let count = 0;
+    for (let i = 1; i < lines.length; i++) {
+      const row = lines[i].split(/[,;\t]+/).map(v => v.replace(/^"|"$/g, '').trim());
+      if (row.length <= Math.max(stateIdx, npaIdx, nxxIdx)) continue;
+
+      const state = (row[stateIdx] || "").toUpperCase();
+      const npa = (row[npaIdx] || "").replace(/\D/g, "");
+      const nxx = (row[nxxIdx] || "").replace(/\D/g, "");
+      const carrier = companyIdx >= 0 ? (row[companyIdx] || "").toUpperCase() : "";
+
+      if (state && /^\d{3}$/.test(npa) && /^\d{3}$/.test(nxx)) {
+  // Convert full state names to abbreviations if possible
+  const abbrev = Object.entries(stateNames).find(([abbr, name]) => 
+    name.toUpperCase() === state.toUpperCase()
+  );
+  const stateCode = abbrev ? abbrev[0] : state.toUpperCase();
+
+  nanpaData[npa + nxx] = { state: stateCode, carrier };
+  count++;
+}
+
+    }
+
+    if (count === 0) {
+      alert("❌ NANPA loaded 0 prefixes. File might be UTF-16 encoded or delimited differently.\nTry re-saving as UTF-8 CSV.");
+    } else {
+      alert(`✅ NANPA loaded successfully with ${count.toLocaleString()} prefixes`);
+      console.log("Sample prefix entries:", Object.entries(nanpaData).slice(0, 5));
+    }
+  };
+  reader.readAsText(file, 'UTF-8');
+});
+
+// ========== NUMBERS FILE PARSER ==========
+document.getElementById("numbersFile").addEventListener("change", e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = evt => {
+    numbers = evt.target.result.split(/[\r\n,]+/).map(n => n.trim()).filter(Boolean);
+    validateNumbers();
+  };
+  reader.readAsText(file);
+});
+
+// ========== VALIDATION ==========
+function validateNumbers() {
+  if (!Object.keys(nanpaData).length) {
+    alert("⚠️ Load NANPA data first!");
+    return;
+  }
+
+  const tbody = document.querySelector("#resultTable tbody");
+  tbody.innerHTML = "";
+  let rowCount = 0;
+
+  numbers.forEach(num => {
+    let valid = false, prefix = "", state = "-", carrier = "-";
+    try {
+      const phone = libphonenumber.parsePhoneNumber(num, "US");
+      if (phone && phone.isValid()) {
+        valid = true;
+        const digits = phone.nationalNumber;
+        prefix = digits.substring(0, 6);
+        if (nanpaData[prefix]) {
+          const abbrev = nanpaData[prefix].state;
+          state = stateNames[abbrev] || abbrev;
+          carrier = nanpaData[prefix].carrier || "-";
+        }
+      }
+    } catch {}
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${++rowCount}</td>
+      <td>${num}</td>
+      <td class="${valid ? "valid" : "invalid"}">${valid ? "✅ Valid" : "❌ Invalid"}</td>
+      <td>${state}</td>
+      <td>${carrier}</td>
+      <td>${prefix}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+  alert("✅ Validation complete!");
+}
+</script>
+
+
+</body>
+</html>
