@@ -5,7 +5,7 @@
 <title>US Phone Validator (with NANPA)</title>
 <style>
   body { font-family: Arial; padding: 20px; background: #fafafa; }
-  input { margin-bottom: 10px; }
+  input, button { margin-bottom: 10px; }
   table { border-collapse: collapse; width: 100%; margin-top: 15px; }
   th, td { border: 1px solid #ccc; padding: 6px 8px; }
   th { background: #eee; }
@@ -16,16 +16,20 @@
 <body>
 <h2>📞 U.S. Phone Validator (Browser)</h2>
 
-<p>1️⃣ Upload your NANPA CSV → 2️⃣ Upload your Numbers File</p>
+<p>1️⃣ Upload your NANPA CSV → 2️⃣ Upload your Numbers File → 3️⃣ Download Results</p>
 
 <input type="file" id="nanpaFile" accept=".csv,.txt" />
 <br />
 <input type="file" id="numbersFile" accept=".csv,.txt" />
 
+<!-- === NEW BUTTON === -->
+<br />
+<button id="downloadBtn" disabled>⬇️ Download CSV Results</button>
+
 <table id="resultTable">
   <thead>
     <tr>
-      <th>#</th><th>Number</th><th>Valid</th><th>State</th><th>Prefix</th>
+      <th>#</th><th>Number</th><th>Valid</th><th>State</th><th>Carrier</th><th>Prefix</th>
     </tr>
   </thead>
   <tbody></tbody>
@@ -57,9 +61,7 @@ document.getElementById("nanpaFile").addEventListener("change", e => {
   const reader = new FileReader();
   reader.onload = evt => {
     const text = evt.target.result;
-    // Normalize encoding, strip BOM, trim whitespace
     const cleanText = text.replace(/\uFEFF/g, '').trim();
-
     const lines = cleanText.split(/\r?\n/).filter(Boolean);
     console.log("First 3 lines from file:", lines.slice(0,3));
 
@@ -68,7 +70,6 @@ document.getElementById("nanpaFile").addEventListener("change", e => {
       return;
     }
 
-    // detect header columns robustly (case-insensitive)
     const headers = lines[0].split(/[,;\t]+/).map(h => h.trim().toLowerCase());
     const stateIdx = headers.findIndex(h => h.includes("state"));
     const npaIdx = headers.findIndex(h => h === "npa" || h.includes("area"));
@@ -92,16 +93,13 @@ document.getElementById("nanpaFile").addEventListener("change", e => {
       const carrier = companyIdx >= 0 ? (row[companyIdx] || "").toUpperCase() : "";
 
       if (state && /^\d{3}$/.test(npa) && /^\d{3}$/.test(nxx)) {
-  // Convert full state names to abbreviations if possible
-  const abbrev = Object.entries(stateNames).find(([abbr, name]) => 
-    name.toUpperCase() === state.toUpperCase()
-  );
-  const stateCode = abbrev ? abbrev[0] : state.toUpperCase();
-
-  nanpaData[npa + nxx] = { state: stateCode, carrier };
-  count++;
-}
-
+        const abbrev = Object.entries(stateNames).find(([abbr, name]) => 
+          name.toUpperCase() === state.toUpperCase()
+        );
+        const stateCode = abbrev ? abbrev[0] : state.toUpperCase();
+        nanpaData[npa + nxx] = { state: stateCode, carrier };
+        count++;
+      }
     }
 
     if (count === 0) {
@@ -136,6 +134,7 @@ function validateNumbers() {
   const tbody = document.querySelector("#resultTable tbody");
   tbody.innerHTML = "";
   let rowCount = 0;
+  const results = []; // === NEW === collect results for CSV
 
   numbers.forEach(num => {
     let valid = false, prefix = "", state = "-", carrier = "-";
@@ -162,11 +161,32 @@ function validateNumbers() {
       <td>${prefix}</td>
     `;
     tbody.appendChild(tr);
+
+    // === NEW === store data
+    results.push([rowCount, num, valid ? "Valid" : "Invalid", state, carrier, prefix]);
   });
+
   alert("✅ Validation complete!");
+  document.getElementById("downloadBtn").disabled = false;
+  document.getElementById("downloadBtn").onclick = () => downloadCSV(results);
+}
+
+// ========== CSV DOWNLOAD FUNCTION ==========
+function downloadCSV(rows) {
+  const headers = ["#", "Number", "Valid", "State", "Carrier", "Prefix"];
+  let csvContent = headers.join(",") + "\n" + rows.map(r => r.map(v => `"${v}"`).join(",")).join("\n");
+
+  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "validation_results.csv";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 </script>
-
-
 </body>
 </html>
